@@ -152,6 +152,14 @@ print(f"C1 · Removed {rows_before - df.count()} duplicate rows → {df.count()}
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ### C1: Remove duplicate rows
+# MAGIC Sometimes the same order is exported twice, so two rows match in **every column**.
+# MAGIC If we keep both, Power BI counts that sale twice and revenue looks too high.
+# MAGIC `dropDuplicates()` keeps one copy and removes the rest.
+
+# COMMAND ----------
+
 # C2a: Replace/Remove "NA", "N/A", "null", "NULL" values
 
 df = df.replace(["NA", "N/A", "null", "NULL"], None)
@@ -163,6 +171,13 @@ for c in df.columns:
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ### C2a: Turn fake "missing" text into real nulls
+# MAGIC Works like **Find & Replace in Excel**: `NA`, `N/A`, `null`, `NULL` become real nulls,
+# MAGIC so one null check catches every missing value.
+
+# COMMAND ----------
+
 #C2b: Delete rows that are missing an important value
 
 CRITICAL_COLS = ["ord_id", "order_dt", "product_info"]
@@ -170,6 +185,13 @@ CRITICAL_COLS = ["ord_id", "order_dt", "product_info"]
 rows_before = df.count()
 df = df.dropna(subset=CRITICAL_COLS)
 print(f"C2b · Dropped {rows_before - df.count()} rows missing a critical field → {df.count()} rows left")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C2b: Drop rows missing a critical field
+# MAGIC Without `ord_id`, `order_dt` or `product_info`, a row is useless.
+# MAGIC We can't guess these without making up fake data, so the row is deleted.
 
 # COMMAND ----------
 
@@ -186,6 +208,13 @@ df = df.fillna({
 
 for c in df.columns:
     print(c, df.filter(F.col(c).isNull()).count())
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C2c: Fill the remaining empty values
+# MAGIC These rows are still real sales, so we keep them and fill the gaps with safe defaults:
+# MAGIC names/location → `Unknown`, qty → `1` (the most common quantity).
 
 # COMMAND ----------
 
