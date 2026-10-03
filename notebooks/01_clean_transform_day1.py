@@ -1,15 +1,12 @@
 # Databricks notebook source
-# Copy of the Databricks notebook Ecommerce_Project/01_clean_transform_day1
-# P-1028: read the raw 01-10-2026 CSV and profile it before cleaning.
-
-# COMMAND ----------
-
 display(dbutils.fs.ls("/Volumes/workspace/ecommerce/raw_files"))
+
 # Reasoning: dbutils.fs.ls lists files in a path. If you see the 4 CSVs, Spark can read them.
 
 # COMMAND ----------
 
 # Cell 1: Imports and settings
+
 from pyspark.sql import functions as F
 
 CATALOG      = "workspace"
@@ -23,7 +20,8 @@ TARGET_TABLE = f"{CATALOG}.{SCHEMA}.sales_clean_2026_10_01"
 
 # COMMAND ----------
 
-# Cell 2: Read the raw CSV
+ # Cell 2: Read the raw CSV
+
 raw_df = (spark.read
           .option("header", True)          # first row = column names
           .option("inferSchema", False)    # read EVERYTHING as string on purpose
@@ -38,6 +36,7 @@ display(raw_df.limit(20))
 ### Cell 3: Missing values per column
 
 # One column first
+
 # raw_df.filter(F.col("qty").isNull()).count()
 
 #Read it left to right:
@@ -58,21 +57,22 @@ for c in raw_df.columns:
 #- The middle line counts the empty rows for that column.
 #- print shows the column name and its count.
 
-# Reasoning: Loop through each column, keep only the rows where that column is null, and count them. This shows how many
-# values are missing in each column.
+# Reasoning: Loop through each column, keep only the rows where that column is null, and count them. This shows how many values are missing in each column.
+
 
 # COMMAND ----------
 
 # Cell 4: Placeholder text that's really "missing"
+
 for c in raw_df.columns:
     fake = raw_df.filter(F.trim(F.col(c)).isin("N/A", "NA", "null", "NULL")).count()
     print(c, "→", fake)
 
 # Reading it left to right
+
 #- for c in raw_df.columns: goes through each column, one by one.
 #- F.col(c) takes the values in that column.
-#- F.trim(...) removes extra spaces from the start and end, so " N/A " becomes "N/A". Without it, values with spaces would
-#  slip through.
+#- F.trim(...) removes extra spaces from the start and end, so " N/A " becomes "N/A". Without it, values with spaces would slip through.
 #- .isin("N/A", "NA", "null", "NULL") asks "is the value one of these words?" and gets yes or no.
 #- .filter(...) keeps only the "yes" rows.
 #- .count() counts them.
@@ -93,8 +93,8 @@ print(f"Total rows: {total} | Distinct rows: {distinct} | Duplicates: {total - d
 display(raw_df.groupBy("qty").count().orderBy(F.desc("count")))
 
 # Reading it left to right
-#- raw_df.groupBy("qty") puts rows with the same qty value into one group. All the 1s go together, all the 2s go together, and
-#  so on.
+
+#- raw_df.groupBy("qty") puts rows with the same qty value into one group. All the 1s go together, all the 2s go together, and so on.
 #- .count() counts how many rows are in each group.
 #- .orderBy(F.desc("count")) sorts the result with the biggest count at the top. desc means descending, from high to low.
 #- display(...) shows the result as a table.
@@ -106,10 +106,10 @@ display(raw_df.groupBy("qty").count().orderBy(F.desc("count")))
 display(raw_df.groupBy(F.substring("order_dt", 1, 10).alias("date_part")).count())
 
 # Reading it left to right:
-#- F.substring("order_dt", 1, 10) takes only the first 10 characters, starting at character 1. So 01-10-2026 00:27 becomes
-#  01-10-2026, and the time is dropped.
+#- F.substring("order_dt", 1, 10) takes only the first 10 characters, starting at character 1. So 01-10-2026 00:27 becomes   01-10-2026, and the time is dropped.
 #- .alias("date_part") names that new column date_part.
 #- .groupBy(...).count() groups the same date parts together and counts them
+
 
 # COMMAND ----------
 
@@ -135,3 +135,98 @@ display(raw_df.groupBy("location").count().orderBy("location"))
 # MAGIC | qty with spaces, decimals (1.0), words (one, three), negatives, zero | qty | ~30 different values | C3 + C4 |
 # MAGIC | 3 date formats + impossible dates (30/02, 31/02) + wrong years (2062, 2025) | order_dt | 38 impossible + 45 wrong year | C3 + C4 |
 # MAGIC | Same city in different case and spacing | location | 62 values for ~16 cities | C4 |
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # **Data Cleaning**
+
+# COMMAND ----------
+
+# C1: Remove duplicate rows
+
+rows_before = raw_df.count()      # rows_before = raw_df.count(): count all the rows before cleaning (5,000)
+df = raw_df.dropDuplicates()      # if two or more rows match in all 7 columns, keep one and remove the rest
+
+print(f"C1 · Removed {rows_before - df.count()} duplicate rows → {df.count()} rows left")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C1: Remove duplicate rows
+# MAGIC Sometimes the same order is exported twice, so two rows match in **every column**.
+# MAGIC If we keep both, Power BI counts that sale twice and revenue looks too high.
+# MAGIC `dropDuplicates()` keeps one copy and removes the rest.
+
+# COMMAND ----------
+
+# C2a: Replace/Remove "NA", "N/A", "null", "NULL" values
+
+df = df.replace(["NA", "N/A", "null", "NULL"], None)
+
+# To check/verify it
+
+for c in df.columns:
+    print(c, df.filter(F.col(c).isNull()).count())
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C2a: Turn fake "missing" text into real nulls
+# MAGIC Works like **Find & Replace in Excel**: `NA`, `N/A`, `null`, `NULL` become real nulls,
+# MAGIC so one null check catches every missing value.
+
+# COMMAND ----------
+
+#C2b: Delete rows that are missing an important value
+
+CRITICAL_COLS = ["ord_id", "order_dt", "product_info"]
+
+rows_before = df.count()
+df = df.dropna(subset=CRITICAL_COLS)
+print(f"C2b · Dropped {rows_before - df.count()} rows missing a critical field → {df.count()} rows left")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C2b: Drop rows missing a critical field
+# MAGIC Without `ord_id`, `order_dt` or `product_info`, a row is useless.
+# MAGIC We can't guess these without making up fake data, so the row is deleted.
+
+# COMMAND ----------
+
+#C2c: Fill the empty values that are left
+
+df = df.fillna({
+    "cust_fname": "Unknown",
+    "cust_lname": "",
+    "location":   "Unknown, Unknown",
+    "qty":        "1",
+})
+
+# To check it
+
+for c in df.columns:
+    print(c, df.filter(F.col(c).isNull()).count())
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C2c: Fill the remaining empty values
+# MAGIC These rows are still real sales, so we keep them and fill the gaps with safe defaults:
+# MAGIC names/location → `Unknown`, qty → `1` (the most common quantity).
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
