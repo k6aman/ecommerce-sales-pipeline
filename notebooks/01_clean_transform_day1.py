@@ -218,11 +218,35 @@ for c in df.columns:
 
 # COMMAND ----------
 
+# C3: Convert types safely 
 
+df = (df
+    # order_dt: try each known format, keep the first one that works
+    .withColumn("order_dt", F.coalesce(
+        F.expr("try_to_timestamp(trim(order_dt), 'dd/MM/yyyy HH:mm')"),      # 01/10/2026 14:35
+        F.expr("try_to_timestamp(trim(order_dt), 'yyyy-MM-dd HH:mm:ss')"),   # 2026-10-01 14:35:20
+        F.expr("try_to_timestamp(trim(order_dt), 'dd-MM-yyyy HH:mm')"),      # 01-10-2026 14:35
+    ))
+    # qty: " 3 " / "3.0" → 3 ;  "two" → null
+    .withColumn("qty", F.expr("try_cast(trim(qty) AS DOUBLE)").cast("int"))
+)
+
+df.printSchema()
 
 # COMMAND ----------
 
+# C3 check: what failed to convert?
 
+print("order_dt that failed to parse:", df.filter(F.col("order_dt").isNull()).count())
+print("qty that failed to convert:   ", df.filter(F.col("qty").isNull()).count())
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C3: Fix data types
+# MAGIC Like **VALUE() / DATEVALUE() in Excel**: `order_dt` text → timestamp (tries 3 date formats),
+# MAGIC `qty` text → integer (" 3 " / "3.0" → 3). Bad values like `31/02` or `two` become null
+# MAGIC instead of crashing the notebook. C4 removes them.
 
 # COMMAND ----------
 
