@@ -250,7 +250,108 @@ print("qty that failed to convert:   ", df.filter(F.col("qty").isNull()).count()
 
 # COMMAND ----------
 
+# C4a: Remove dates that couldn't be parsed
 
+rows_before = df.count()   
+# Counts how many rows the table has right now (4,706 for file 01) and saves that number in rows_before.
+
+df = df.filter(F.col("order_dt").isNotNull())
+# Keeps only the rows where order_dt has a value and drops the rows where it's empty (null). In step C3, impossible dates like 31/02/2026 couldn't be turned into real dates, so they became null. This line removes them.
+
+print(f"C4a · Removed {rows_before - df.count()} rows with an invalid date → {df.count()}")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ### C4a: Remove dates that couldn't be parsed
+# MAGIC Impossible dates like `31/02/2026` became null in C3. The real date can't be recovered, so the row is removed.
+
+# COMMAND ----------
+
+# C4b: Keep only orders from this file's day
+
+rows_before = df.count()
+# Saves the current row count (4,670 after C4a).
+
+df = df.filter(F.to_date("order_dt") == F.lit(FILE_DATE).cast("date"))
+# Keeps only the orders from this file's day. It has three parts:
+# - F.to_date("order_dt") takes just the date from the timestamp and drops the time, so 2026-10-01 14:35 becomes 2026-10-01.
+# - F.lit(FILE_DATE) turns your FILE_DATE setting (e.g. "2026-10-01") into a value Spark can compare against.
+# - .cast("date") changes that text into a real date, so both sides of == are dates.
+
+# Rows whose date matches the file's day stay. Rows with typo years like 01/10/2062 or 01/10/2025 are removed.
+
+print(f"C4b · Removed {rows_before - df.count()} rows with a date outside {FILE_DATE} → {df.count()}")
+# Prints how many rows were removed and how many are left. For file 01 you should see Removed 44 … → 4626.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C4b: Keep only orders from this file's day
+# MAGIC Each file is one day's export. Typo years like `2062` or `2025` don't match `FILE_DATE`, so those rows are removed.
+
+# COMMAND ----------
+
+# C4c: Remove qty values that weren't numbers
+
+rows_before = df.count()
+# Saves the current row count (4,626 after C4b).
+
+df = df.filter(F.col("qty").isNotNull())
+# Keeps only the rows where qty has a value and removes the rows where it's empty (null).
+
+print(f"C4c · Removed {rows_before - df.count()} rows with non-numeric qty → {df.count()}")
+# Prints how many rows were removed and how many are left. For file 01 you should see Removed 18 … → 4608.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C4c: Remove qty values that weren't numbers
+# MAGIC Words like `two` became null in C3. We never guess a value, so the row is removed.
+
+# COMMAND ----------
+
+# C4d: Fix negative qty, remove zero qty
+
+print("Negative qty rows fixed:", df.filter(F.col("qty") < 0).count())
+# Counts the rows where qty is below 0 and prints that number. This only reports and doesn't change anything. For file 01 you should see 56.
+
+rows_before = df.count()
+# Saves the current row count (4,608 after C4c).
+
+# Step 1: turn negative numbers into positive ones
+df = df.withColumn("qty", F.abs("qty"))    # F.abs removes the minus sign, so -2 becomes 2 and 5 stays 5.
+
+# Step 2: keep only rows where qty is more than 0
+df = df.filter(F.col("qty") > 0)
+
+print(f"C4d · Removed {rows_before - df.count()} rows with qty = 0 → {df.count()}")
+# Prints how many rows were removed. For file 01 you should see Removed 27 … → 4581.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C4d: Fix negative qty, remove zero qty
+# MAGIC This feed has no returns, so `-2` is a typo and `abs()` turns it into `2`. A qty of `0` isn't a sale, so the row is removed.
+
+# COMMAND ----------
+
+# C4e: Fix messy text (spaces and mixed case)
+
+df = df.withColumn("cust_fname", F.initcap(F.trim("cust_fname")))
+df = df.withColumn("cust_lname", F.initcap(F.trim("cust_lname")))
+df = df.withColumn("location",   F.initcap(F.trim("location")))
+
+# Each line uses two functions, and the inner one runs first:
+
+# 1. F.trim removes extra spaces at the start and end of the text, so "  surat  " becomes "surat".
+# 2. F.initcap makes the first letter of each word a capital and the rest small, so "SURAT, GUJARAT" becomes "Surat, Gujarat".
+
+display(df.groupBy("location").count().orderBy("location"))
+#Shows each distinct location with how many orders it has, sorted A to Z. This is just a check, and you should see exactly 16 locations (15 cities plus Unknown, Unknown).
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C4e: Fix messy text
+# MAGIC Like **TRIM() + PROPER() in Excel**: `SURAT, GUJARAT` and `  surat, gujarat ` both become `Surat, Gujarat`, so Power BI shows one bar per city.
